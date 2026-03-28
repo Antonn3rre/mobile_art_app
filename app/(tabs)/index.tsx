@@ -126,14 +126,14 @@ export default function HomeScreen() {
         queryParts.push(titleQuery);
       }
       if (yearFromValue && yearToValue) {
-        queryParts.push(`year:[${yearFromValue} TO ${yearToValue}]`);
+        filters.push(`YEAR:[${yearFromValue} TO ${yearToValue}]`);
       } else if (yearFromValue) {
-        queryParts.push(`year:${yearFromValue}`);
+        filters.push(`YEAR:${yearFromValue}`);
       } else if (yearToValue) {
-        queryParts.push(`year:${yearToValue}`);
+        filters.push(`YEAR:${yearToValue}`);
       }
       if (mediaTypeValue) {
-        queryParts.push(`type:${mediaTypeValue}`);
+        filters.push(`TYPE:${mediaTypeValue}`);
       }
     }
 
@@ -245,14 +245,15 @@ export default function HomeScreen() {
   };
 
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
+      <ParallaxScrollView
+        headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
+        headerImage={
+          <Image
+            source={require('@/assets/images/L_etang_aux_nympheas_de_Claude_Monet_copie.jpg')}
+            style={styles.headerArtwork}
+            contentFit="cover"
+          />
+        }>
       <ThemedView style={styles.titleContainer}>
         <ThemedText type="title">Recherche Europeana</ThemedText>
       </ThemedView>
@@ -458,12 +459,9 @@ const styles = StyleSheet.create({
   titleContainer: {
     marginBottom: 8,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  headerArtwork: {
+    height: '100%',
+    width: '100%',
   },
   searchContainer: {
     gap: 12,

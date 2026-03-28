@@ -1,3 +1,4 @@
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
@@ -5,7 +6,6 @@ import { Modal, Pressable, StyleSheet, TextInput, View } from 'react-native';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { createCollection, getCollections, type CollectionRow } from '@/database/db';
 import { useFocusEffect } from '@react-navigation/native';
 import { useThemeColor } from '@/hooks/use-theme-color';
@@ -69,16 +69,15 @@ export default function CollectionsScreen() {
   };
 
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={
-        <IconSymbol
-          size={310}
-          color="#808080"
-          name="rectangle.stack.fill"
-          style={styles.headerImage}
-        />
-      }>
+      <ParallaxScrollView
+        headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
+        headerImage={
+          <Image
+            source={require('@/assets/images/Galerie_de_vues_de_la_Rome_antique_-_Giovanni_Paolo_Pannini_-_Musée_du_Louvre_Peintures_RF_1944_21.jpg')}
+            style={styles.headerArtwork}
+            contentFit="cover"
+          />
+        }>
       <ThemedView style={styles.titleContainer}>
         <ThemedText type="title">Collections</ThemedText>
         <Pressable
@@ -154,11 +153,9 @@ export default function CollectionsScreen() {
 }
 
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
-    position: 'absolute',
+  headerArtwork: {
+    height: '100%',
+    width: '100%',
   },
   titleContainer: {
     flexDirection: 'row',
