@@ -1,54 +1,115 @@
+import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
-import {
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  View,
-} from 'react-native';
+import { useState } from 'react';
+import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 
-import { SearchResultCard } from '@/components/search-result-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import {
   addArtToCollection,
   createCollection,
-  getCollectionItems,
   getCollections,
   removeArtFromCollection,
   upsertArtPiece,
-  type ArtPieceRow,
   type CollectionRow,
 } from '@/database/db';
-import { useFocusEffect } from '@react-navigation/native';
-import { setArtCache } from '@/store/art-cache';
+import { getArtCache } from '@/store/art-cache';
 
-type SearchResultItem = {
+type LangAwareValue = Record<string, string | string[]> | string | string[] | undefined;
+
+type ArtItem = {
   id?: string;
   edmPreview?: string | string[];
+  edmIsShownBy?: string | string[];
+  edmIsShownAt?: string | string[];
+  edmObject?: string | string[];
   title?: string | string[];
+  dcDescriptionLangAware?: LangAwareValue;
+  dcCreator?: string | string[];
+  dcCreatorLangAware?: LangAwareValue;
   year?: string | number | (string | number)[];
   type?: string;
+  country?: string | string[];
+  dataProvider?: string | string[];
+  provider?: string | string[];
 };
 
-function toSearchItem(row: ArtPieceRow): SearchResultItem {
-  return {
-    id: row.id,
-    title: row.title ?? '',
-    edmPreview: row.imageUrl ?? undefined,
-    year: row.year ?? undefined,
-    type: row.type ?? undefined,
-  };
+function getLangText(value: LangAwareValue, lang: string) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value[0] ?? '';
+  const langValue = value[lang];
+  if (!langValue) return '';
+  return Array.isArray(langValue) ? langValue[0] ?? '' : langValue;
 }
 
-export default function CollectionDetailScreen() {
+function getFirstValue(value: string | number | (string | number)[] | undefined) {
+  if (value === undefined || value === null) return '';
+  if (Array.isArray(value)) return String(value[0] ?? '');
+  return String(value);
+}
+
+function getTitle(value: string | string[] | undefined) {
+  if (!value) return '';
+  if (Array.isArray(value)) return value[0] ?? '';
+  return value;
+}
+
+function getText(value: string | string[] | undefined) {
+  if (!value) return '';
+  if (Array.isArray(value)) return value[0] ?? '';
+  return value;
+}
+
+function getPreviewUrl(item: ArtItem | null) {
+  if (!item) return '';
+  const candidates = [
+    item.edmPreview,
+    item.edmIsShownBy,
+    item.edmIsShownAt,
+    item.edmObject,
+  ];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (Array.isArray(candidate)) return candidate[0] ?? '';
+    return candidate;
+  }
+  return '';
+}
+
+export default function ArtDetailScreen() {
   const params = useLocalSearchParams();
   const router = useRouter();
-  const collectionId = useMemo(() => Number(params.id), [params.id]);
-  const collectionName = typeof params.name === 'string' ? params.name : 'Collection';
+  const rawData = typeof params.data === 'string' ? params.data : '';
+  const cacheKey = Array.isArray(params.id) ? params.id[0] : params.id;
+  const cached = getArtCache(cacheKey);
+  const collectionId = typeof params.collectionId === 'string' ? Number(params.collectionId) : null;
+  const collectionName = typeof params.collectionName === 'string' ? params.collectionName : '';
+
+  let item: ArtItem | null = (cached as ArtItem | null) ?? null;
+  if (rawData) {
+    try {
+      item = item ?? (JSON.parse(rawData) as ArtItem);
+    } catch (err) {
+      item = null;
+    }
+  }
+
+  const title = getTitle(item?.title);
+  const description =
+    getLangText(item?.dcDescriptionLangAware, 'fr') ||
+    getLangText(item?.dcDescriptionLangAware, 'en');
+  const creator =
+    getLangText(item?.dcCreatorLangAware, 'fr') ||
+    getLangText(item?.dcCreatorLangAware, 'en') ||
+    getText(item?.dcCreator);
+  const year = getFirstValue(item?.year);
+  const type = item?.type ?? '';
+  const country = getText(item?.country);
+  const dataProvider = getText(item?.dataProvider);
+  const provider = getText(item?.provider);
+  const preview = getPreviewUrl(item);
 
   const inputBackground = useThemeColor(
     { light: '#F1F3F5', dark: '#1E1F21' },
@@ -59,49 +120,35 @@ export default function CollectionDetailScreen() {
   const buttonColor = useThemeColor({ light: '#0a7ea4', dark: '#ffffff' }, 'tint');
   const buttonTextColor = useThemeColor({ light: '#ffffff', dark: '#151718' }, 'background');
 
-  const [items, setItems] = useState<ArtPieceRow[]>([]);
   const [collections, setCollections] = useState<CollectionRow[]>([]);
-  const [selectedItem, setSelectedItem] = useState<SearchResultItem | null>(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [collectionNameInput, setCollectionNameInput] = useState('');
   const [collectionError, setCollectionError] = useState<string | null>(null);
-  const [removeTarget, setRemoveTarget] = useState<SearchResultItem | null>(null);
   const [isRemoveModalVisible, setIsRemoveModalVisible] = useState(false);
 
-  const refreshCollections = useCallback(() => {
+  const refreshCollections = () => {
     try {
       setCollections(getCollections());
     } catch (err) {
       setCollections([]);
     }
-  }, []);
+  };
 
-  const refreshItems = useCallback(() => {
-    if (!collectionId) return;
-    try {
-      setItems(getCollectionItems(collectionId));
-    } catch (err) {
-      setItems([]);
-    }
-  }, [collectionId]);
+  const saveArtPiece = () => {
+    if (!item?.id) return;
+    upsertArtPiece({
+      id: item.id,
+      title: title || null,
+      imageUrl: preview || null,
+      year: year || null,
+      type: item.type ?? null,
+    });
+  };
 
-  useFocusEffect(
-    useCallback(() => {
-      refreshItems();
-      refreshCollections();
-    }, [refreshItems, refreshCollections])
-  );
-
-  const handleOpenModal = (item: SearchResultItem) => {
-    setSelectedItem(item);
+  const handleOpenModal = () => {
     setCollectionError(null);
     setIsModalVisible(true);
     refreshCollections();
-  };
-
-  const handleOpenRemoveModal = (item: SearchResultItem) => {
-    setRemoveTarget(item);
-    setIsRemoveModalVisible(true);
   };
 
   const handleCloseModal = () => {
@@ -110,32 +157,11 @@ export default function CollectionDetailScreen() {
     setCollectionError(null);
   };
 
-  const handleCloseRemoveModal = () => {
-    setIsRemoveModalVisible(false);
-    setRemoveTarget(null);
-  };
-
   const handleAddToCollection = (targetCollectionId: number) => {
-    if (!selectedItem?.id) return;
+    if (!item?.id) return;
     try {
-      upsertArtPiece({
-        id: selectedItem.id,
-        title: typeof selectedItem.title === 'string' ? selectedItem.title : null,
-        imageUrl:
-          typeof selectedItem.edmPreview === 'string'
-            ? selectedItem.edmPreview
-            : Array.isArray(selectedItem.edmPreview)
-            ? selectedItem.edmPreview[0]
-            : null,
-        year:
-          typeof selectedItem.year === 'string' || typeof selectedItem.year === 'number'
-            ? String(selectedItem.year)
-            : Array.isArray(selectedItem.year)
-            ? String(selectedItem.year[0] ?? '')
-            : null,
-        type: selectedItem.type ?? null,
-      });
-      addArtToCollection(targetCollectionId, selectedItem.id);
+      saveArtPiece();
+      addArtToCollection(targetCollectionId, item.id);
       handleCloseModal();
     } catch (err) {
       setCollectionError("Impossible d'ajouter a la collection");
@@ -148,60 +174,107 @@ export default function CollectionDetailScreen() {
       setCollectionError('Le nom de collection est requis');
       return;
     }
-    if (!selectedItem?.id) return;
+    if (!item?.id) return;
 
     try {
       const newId = createCollection(name);
-      handleAddToCollection(newId);
+      saveArtPiece();
+      addArtToCollection(newId, item.id);
+      handleCloseModal();
     } catch (err) {
       setCollectionError('Cette collection existe deja');
     }
   };
 
   const handleConfirmRemove = () => {
-    if (!removeTarget?.id || !collectionId) return;
+    if (!item?.id || !collectionId) return;
     try {
-      removeArtFromCollection(collectionId, removeTarget.id);
-      handleCloseRemoveModal();
-      refreshItems();
+      removeArtFromCollection(collectionId, item.id);
+      setIsRemoveModalVisible(false);
+      router.back();
     } catch (err) {
-      handleCloseRemoveModal();
+      setIsRemoveModalVisible(false);
     }
   };
 
   return (
     <ThemedView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
+        {preview ? (
+          <Image source={{ uri: preview }} style={styles.hero} contentFit="cover" />
+        ) : null}
+
+        <View style={styles.actionsRow}>
+          <Pressable onPress={handleOpenModal} style={({ pressed }) => [
+            styles.actionButton,
+            pressed ? styles.actionButtonPressed : null,
+          ]}>
+            <ThemedText style={styles.actionButtonText}>Ajouter a une collection</ThemedText>
+          </Pressable>
+          {collectionId ? (
+            <Pressable onPress={() => setIsRemoveModalVisible(true)} style={({ pressed }) => [
+              styles.removeButton,
+              pressed ? styles.removeButtonPressed : null,
+            ]}>
+              <ThemedText style={styles.removeButtonText}>Retirer</ThemedText>
+            </Pressable>
+          ) : null}
+        </View>
+
         <ThemedText type="title" style={styles.title}>
-          {collectionName}
+          {title || 'Sans titre'}
         </ThemedText>
 
-        {items.length === 0 ? (
-          <ThemedText style={styles.emptyText}>Aucune oeuvre dans cette collection.</ThemedText>
-        ) : (
-          items.map((item) => (
-            <SearchResultCard
-              key={item.id}
-              item={toSearchItem(item)}
-              onAddToCollection={handleOpenModal}
-              onRemoveFromCollection={handleOpenRemoveModal}
-              onPress={() =>
-                (() => {
-                  const cachedItem = toSearchItem(item);
-                  setArtCache(cachedItem);
-                  router.push({
-                    pathname: '/art/[id]',
-                    params: {
-                      id: String(item.id),
-                      collectionId: String(collectionId),
-                      collectionName,
-                    },
-                  } as any);
-                })()
-              }
-            />
-          ))
-        )}
+        {creator ? (
+          <View style={styles.metaRow}>
+            <ThemedText style={styles.metaLabel}>Createur</ThemedText>
+            <ThemedText>{creator}</ThemedText>
+          </View>
+        ) : null}
+
+        {year ? (
+          <View style={styles.metaRow}>
+            <ThemedText style={styles.metaLabel}>Annee</ThemedText>
+            <ThemedText>{year}</ThemedText>
+          </View>
+        ) : null}
+
+        {type ? (
+          <View style={styles.metaRow}>
+            <ThemedText style={styles.metaLabel}>Type</ThemedText>
+            <ThemedText>{type}</ThemedText>
+          </View>
+        ) : null}
+
+        {country ? (
+          <View style={styles.metaRow}>
+            <ThemedText style={styles.metaLabel}>Pays</ThemedText>
+            <ThemedText>{country}</ThemedText>
+          </View>
+        ) : null}
+
+        {dataProvider ? (
+          <View style={styles.metaRow}>
+            <ThemedText style={styles.metaLabel}>Institution</ThemedText>
+            <ThemedText>{dataProvider}</ThemedText>
+          </View>
+        ) : null}
+
+        {provider ? (
+          <View style={styles.metaRow}>
+            <ThemedText style={styles.metaLabel}>Fournisseur</ThemedText>
+            <ThemedText>{provider}</ThemedText>
+          </View>
+        ) : null}
+
+        {description ? (
+          <View style={styles.descriptionBlock}>
+            <ThemedText type="defaultSemiBold" style={styles.metaLabel}>
+              Description
+            </ThemedText>
+            <ThemedText style={styles.descriptionText}>{description}</ThemedText>
+          </View>
+        ) : null}
       </ScrollView>
 
       <Modal
@@ -267,14 +340,14 @@ export default function CollectionDetailScreen() {
         visible={isRemoveModalVisible}
         animationType="fade"
         transparent
-        onRequestClose={handleCloseRemoveModal}>
+        onRequestClose={() => setIsRemoveModalVisible(false)}>
         <View style={styles.confirmOverlay}>
           <View style={[styles.confirmCard, { backgroundColor: inputBackground }]}>
             <ThemedText type="defaultSemiBold" style={styles.confirmTitle}>
-              Etes vous certain de vouloir supprimer l'oeuvre de {collectionName} ?
+              Etes vous certain de vouloir supprimer l'oeuvre de {collectionName || 'cette collection'} ?
             </ThemedText>
             <View style={styles.confirmActions}>
-              <Pressable onPress={handleCloseRemoveModal} style={styles.confirmButton}>
+              <Pressable onPress={() => setIsRemoveModalVisible(false)} style={styles.confirmButton}>
                 <ThemedText style={styles.confirmButtonText}>Annuler</ThemedText>
               </Pressable>
               <Pressable onPress={handleConfirmRemove} style={styles.deleteButton}>
@@ -295,12 +368,64 @@ const styles = StyleSheet.create({
   content: {
     padding: 16,
   },
+  hero: {
+    width: '100%',
+    height: 240,
+    borderRadius: 16,
+    backgroundColor: '#E9ECEF',
+    marginBottom: 16,
+  },
   title: {
+    marginBottom: 16,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 16,
+  },
+  actionButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#0a7ea4',
+  },
+  actionButtonPressed: {
+    opacity: 0.8,
+  },
+  actionButtonText: {
+    color: '#0a7ea4',
+    fontWeight: '600',
+  },
+  removeButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#E03131',
+  },
+  removeButtonPressed: {
+    opacity: 0.85,
+  },
+  removeButtonText: {
+    color: '#ffffff',
+    fontWeight: '700',
+  },
+  metaRow: {
     marginBottom: 12,
   },
   emptyText: {
     opacity: 0.7,
-    marginBottom: 12,
+  },
+  metaLabel: {
+    opacity: 0.6,
+    marginBottom: 4,
+  },
+  descriptionBlock: {
+    marginTop: 8,
+  },
+  descriptionText: {
+    opacity: 0.85,
   },
   modalOverlay: {
     flex: 1,

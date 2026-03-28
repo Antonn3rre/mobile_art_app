@@ -59,10 +59,12 @@ export function SearchResultCard({
   item,
   onAddToCollection,
   onRemoveFromCollection,
+  onPress,
 }: {
   item: SearchResultItem;
   onAddToCollection?: (item: SearchResultItem) => void;
   onRemoveFromCollection?: (item: SearchResultItem) => void;
+  onPress?: (item: SearchResultItem) => void;
 }) {
   const title = getTitle(item.title);
   const descriptionRaw = getLangText(item.dcDescriptionLangAware, 'fr');
@@ -72,7 +74,7 @@ export function SearchResultCard({
   const preview = Array.isArray(item.edmPreview) ? item.edmPreview[0] : item.edmPreview;
   const canAdd = Boolean(onAddToCollection && item.id);
 
-  return (
+  const cardContent = (
     <ThemedView style={styles.card}>
       <View style={styles.row}>
         {preview ? (
@@ -127,6 +129,16 @@ export function SearchResultCard({
       </View>
     </ThemedView>
   );
+
+  if (onPress) {
+    return (
+      <Pressable onPress={() => onPress(item)} style={({ pressed }) => [pressed ? styles.cardPressed : null]}>
+        {cardContent}
+      </Pressable>
+    );
+  }
+
+  return cardContent;
 }
 
 const styles = StyleSheet.create({
@@ -136,6 +148,9 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.08)',
+  },
+  cardPressed: {
+    opacity: 0.9,
   },
   row: {
     flexDirection: 'row',

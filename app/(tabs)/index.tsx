@@ -9,12 +9,14 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { SearchResultCard } from '@/components/search-result-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
+import { setArtCache } from '@/store/art-cache';
 import {
   addArtToCollection,
   createCollection,
@@ -44,7 +46,21 @@ function getTitle(value: string | string[] | undefined) {
   return value;
 }
 
+function buildFieldQuery(field: string, value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const tokens = trimmed
+    .split(/\s+/)
+    .map((token) => token.replace(/"/g, ''))
+    .filter(Boolean);
+  if (tokens.length === 0) return null;
+  const exact = `${field}:"${tokens.join(' ')}"`;
+  const wildcard = tokens.map((token) => `${field}:${token}*`).join(' AND ');
+  return `(${exact} OR (${wildcard}))`;
+}
+
 export default function HomeScreen() {
+  const router = useRouter();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -54,6 +70,12 @@ export default function HomeScreen() {
   const [selectedItem, setSelectedItem] = useState<SearchResultItem | null>(null);
   const [collectionName, setCollectionName] = useState('');
   const [collectionError, setCollectionError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [author, setAuthor] = useState('');
+  const [title, setTitle] = useState('');
+  const [yearFrom, setYearFrom] = useState('');
+  const [yearTo, setYearTo] = useState('');
+  const [mediaType, setMediaType] = useState('');
 
   const inputBackground = useThemeColor(
     { light: '#F1F3F5', dark: '#1E1F21' },
@@ -64,11 +86,58 @@ export default function HomeScreen() {
   const buttonColor = useThemeColor({ light: '#0a7ea4', dark: '#ffffff' }, 'tint');
   const buttonTextColor = useThemeColor({ light: '#ffffff', dark: '#151718' }, 'background');
 
-  const canSearch = useMemo(() => query.trim().length > 0, [query]);
+  const canSearch = useMemo(() => {
+    if (!showAdvanced) {
+      return query.trim().length > 0;
+    }
+
+    return (
+      query.trim().length > 0 ||
+      author.trim().length > 0 ||
+      title.trim().length > 0 ||
+      yearFrom.trim().length > 0 ||
+      yearTo.trim().length > 0 ||
+      mediaType.trim().length > 0
+    );
+  }, [author, mediaType, query, showAdvanced, title, yearFrom, yearTo]);
 
   const handleSearch = async () => {
     const trimmed = query.trim();
-    if (!trimmed) {
+    const filters: string[] = [];
+    const queryParts: string[] = [];
+
+    if (trimmed) {
+      queryParts.push(trimmed);
+    }
+
+    if (showAdvanced) {
+      const authorValue = author.trim();
+      const titleValue = title.trim();
+      const yearFromValue = yearFrom.trim();
+      const yearToValue = yearTo.trim();
+      const mediaTypeValue = mediaType.trim().toUpperCase();
+
+      const authorQuery = buildFieldQuery('who', authorValue);
+      const titleQuery = buildFieldQuery('title', titleValue);
+      if (authorQuery) {
+        queryParts.push(authorQuery);
+      }
+      if (titleQuery) {
+        queryParts.push(titleQuery);
+      }
+      if (yearFromValue && yearToValue) {
+        queryParts.push(`year:[${yearFromValue} TO ${yearToValue}]`);
+      } else if (yearFromValue) {
+        queryParts.push(`year:${yearFromValue}`);
+      } else if (yearToValue) {
+        queryParts.push(`year:${yearToValue}`);
+      }
+      if (mediaTypeValue) {
+        queryParts.push(`type:${mediaTypeValue}`);
+      }
+    }
+
+    if (queryParts.length === 0 && filters.length === 0) {
       setResults([]);
       return;
     }
@@ -83,12 +152,17 @@ export default function HomeScreen() {
     setError(null);
 
     try {
-      const url = `https://api.europeana.eu/record/v2/search.json?wskey=${encodeURIComponent(
-        apiKey
-      )}&query=${encodeURIComponent(
-        trimmed
-      )}`;
-      const response = await fetch(url);
+      const params = new URLSearchParams({
+        wskey: apiKey,
+        query: queryParts.length > 0 ? queryParts.join(' AND ') : '*',
+        thumbnail: 'true',
+        rows: '15',
+        profile: 'minimal',
+      });
+      filters.forEach((filter) => {
+        params.append('qf', filter);
+      });
+      const response = await fetch(`https://api.europeana.eu/record/v2/search.json?${params.toString()}`);
       if (!response.ok) {
         throw new Error('Request failed');
       }
@@ -96,15 +170,8 @@ export default function HomeScreen() {
       if (Array.isArray(data?.items) && data.items.length > 0) {
         console.log('Europeana first item:', data.items[0]);
       }
-      const filteredItems = Array.isArray(data?.items)
-        ? data.items.filter((item: any) => {
-            const desc = item?.dcDescriptionLangAware?.fr;
-            if (!desc) return false;
-            if (Array.isArray(desc)) return desc.length > 0 && Boolean(desc[0]);
-            return typeof desc === 'string' && desc.length > 0;
-          })
-        : [];
-      setResults(filteredItems);
+      const items = Array.isArray(data?.items) ? data.items : [];
+      setResults(items);
     } catch (err) {
       setError('Impossible de charger les resultats');
     } finally {
@@ -194,12 +261,93 @@ export default function HomeScreen() {
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Rechercher une oeuvre, un artiste..."
+          placeholder="Mot-cle (ex: Monet, paysage...)"
           placeholderTextColor={placeholderText}
           style={[styles.searchInput, { backgroundColor: inputBackground, color: inputText }]}
           returnKeyType="search"
           onSubmitEditing={handleSearch}
         />
+        <Pressable
+          onPress={() => {
+            setShowAdvanced((prev) => {
+              const next = !prev;
+              if (!next) {
+                setAuthor('');
+                setTitle('');
+                setYearFrom('');
+                setYearTo('');
+                setMediaType('');
+              }
+              return next;
+            });
+          }}
+          style={({ pressed }) => [
+            styles.advancedToggle,
+            pressed ? styles.advancedTogglePressed : null,
+          ]}>
+          <ThemedText style={styles.advancedToggleText}>
+            {showAdvanced ? 'Masquer recherche avancee' : 'Recherche avancee'}
+          </ThemedText>
+        </Pressable>
+        {showAdvanced ? (
+          <View style={styles.advancedSection}>
+            <TextInput
+              value={author}
+              onChangeText={setAuthor}
+              placeholder="Auteur / createur"
+              placeholderTextColor={placeholderText}
+              style={[styles.searchInput, { backgroundColor: inputBackground, color: inputText }]}
+            />
+            <TextInput
+              value={title}
+              onChangeText={setTitle}
+              placeholder="Titre"
+              placeholderTextColor={placeholderText}
+              style={[styles.searchInput, { backgroundColor: inputBackground, color: inputText }]}
+            />
+            <View style={styles.yearRow}>
+              <TextInput
+                value={yearFrom}
+                onChangeText={setYearFrom}
+                placeholder="Annee de"
+                placeholderTextColor={placeholderText}
+                keyboardType="number-pad"
+                style={[styles.searchInput, styles.yearInput, { backgroundColor: inputBackground, color: inputText }]}
+              />
+              <TextInput
+                value={yearTo}
+                onChangeText={setYearTo}
+                placeholder="Annee a"
+                placeholderTextColor={placeholderText}
+                keyboardType="number-pad"
+                style={[styles.searchInput, styles.yearInput, { backgroundColor: inputBackground, color: inputText }]}
+              />
+            </View>
+            <View style={styles.typeRow}>
+              {['IMAGE', 'VIDEO', 'SOUND', 'TEXT'].map((typeValue) => (
+                <Pressable
+                  key={typeValue}
+                  onPress={() =>
+                    setMediaType((prev) => (prev === typeValue ? '' : typeValue))
+                  }
+                  style={({ pressed }) => [
+                    styles.typeChip,
+                    mediaType === typeValue ? styles.typeChipActive : null,
+                    pressed ? styles.typeChipPressed : null,
+                  ]}>
+                  <ThemedText
+                    style={
+                      mediaType === typeValue
+                        ? styles.typeChipTextActive
+                        : styles.typeChipText
+                    }>
+                    {typeValue}
+                  </ThemedText>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        ) : null}
         <Pressable
           onPress={handleSearch}
           disabled={!canSearch || isLoading}
@@ -231,6 +379,16 @@ export default function HomeScreen() {
           key={`${item?.id ?? 'result'}-${index}`}
           item={item}
           onAddToCollection={handleOpenModal}
+          onPress={(selected) => {
+            if (!selected?.id) return;
+            setArtCache(selected);
+            router.push({
+              pathname: '/art/[id]',
+              params: {
+                id: String(selected.id),
+              },
+            } as any);
+          }}
         />
       ))}
 
@@ -310,6 +468,57 @@ const styles = StyleSheet.create({
   searchContainer: {
     gap: 12,
     marginBottom: 16,
+  },
+  advancedToggle: {
+    alignSelf: 'flex-start',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#0a7ea4',
+  },
+  advancedTogglePressed: {
+    opacity: 0.8,
+  },
+  advancedToggleText: {
+    color: '#0a7ea4',
+    fontWeight: '600',
+  },
+  advancedSection: {
+    gap: 10,
+  },
+  yearRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  yearInput: {
+    flex: 1,
+  },
+  typeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  typeChip: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#0a7ea4',
+  },
+  typeChipActive: {
+    backgroundColor: '#0a7ea4',
+  },
+  typeChipPressed: {
+    opacity: 0.8,
+  },
+  typeChipText: {
+    color: '#0a7ea4',
+    fontWeight: '600',
+  },
+  typeChipTextActive: {
+    color: '#ffffff',
+    fontWeight: '600',
   },
   searchInput: {
     borderRadius: 14,
