@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -7,6 +7,7 @@ import { ThemedView } from '@/components/themed-view';
 type LangAwareValue = Record<string, string | string[]> | string | string[] | undefined;
 
 type SearchResultItem = {
+  id?: string;
   edmPreview?: string | string[];
   title?: string | string[];
   dcDescriptionLangAware?: LangAwareValue;
@@ -54,13 +55,22 @@ function getTypeColor(type?: string) {
   }
 }
 
-export function SearchResultCard({ item }: { item: SearchResultItem }) {
+export function SearchResultCard({
+  item,
+  onAddToCollection,
+  onRemoveFromCollection,
+}: {
+  item: SearchResultItem;
+  onAddToCollection?: (item: SearchResultItem) => void;
+  onRemoveFromCollection?: (item: SearchResultItem) => void;
+}) {
   const title = getTitle(item.title);
   const descriptionRaw = getLangText(item.dcDescriptionLangAware, 'fr');
   const description = truncateDescription(descriptionRaw, 10);
   const year = getFirstValue(item.year);
   const type = item.type ?? '';
   const preview = Array.isArray(item.edmPreview) ? item.edmPreview[0] : item.edmPreview;
+  const canAdd = Boolean(onAddToCollection && item.id);
 
   return (
     <ThemedView style={styles.card}>
@@ -72,15 +82,43 @@ export function SearchResultCard({ item }: { item: SearchResultItem }) {
         )}
         <View style={styles.content}>
           <View style={styles.titleRow}>
-            <ThemedText type="defaultSemiBold" numberOfLines={2}>
+            <ThemedText type="defaultSemiBold" numberOfLines={2} style={styles.titleText}>
               {title || 'Sans titre'}
             </ThemedText>
-            {type ? (
-              <View style={[styles.badge, { backgroundColor: getTypeColor(type) }]}> 
-                <ThemedText style={styles.badgeText}>{type}</ThemedText>
-              </View>
-            ) : null}
+            <View style={styles.actions}>
+              {onAddToCollection ? (
+                <Pressable
+                  disabled={!canAdd}
+                  onPress={() => {
+                    if (canAdd) {
+                      onAddToCollection(item);
+                    }
+                  }}
+                  style={({ pressed }) => [
+                    styles.addButton,
+                    pressed && canAdd ? styles.addButtonPressed : null,
+                    !canAdd ? styles.addButtonDisabled : null,
+                  ]}>
+                  <ThemedText style={styles.addButtonText}>+</ThemedText>
+                </Pressable>
+              ) : null}
+              {onRemoveFromCollection ? (
+                <Pressable
+                  onPress={() => onRemoveFromCollection(item)}
+                  style={({ pressed }) => [
+                    styles.removeButton,
+                    pressed ? styles.removeButtonPressed : null,
+                  ]}>
+                  <ThemedText style={styles.removeButtonText}>-</ThemedText>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
+          {type ? (
+            <View style={[styles.badge, { backgroundColor: getTypeColor(type) }]}>
+              <ThemedText style={styles.badgeText}>{type}</ThemedText>
+            </View>
+          ) : null}
           {description ? (
             <ThemedText style={styles.description}>{description}</ThemedText>
           ) : null}
@@ -125,15 +163,64 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 8,
   },
+  titleText: {
+    flex: 1,
+    flexShrink: 1,
+  },
+  actions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   badge: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
+    alignSelf: 'flex-start',
   },
   badgeText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '700',
+  },
+  addButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#0a7ea4',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addButtonPressed: {
+    opacity: 0.7,
+  },
+  addButtonDisabled: {
+    opacity: 0.4,
+  },
+  addButtonText: {
+    color: '#0a7ea4',
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  removeButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E03131',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removeButtonPressed: {
+    opacity: 0.7,
+  },
+  removeButtonText: {
+    color: '#E03131',
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 20,
   },
   description: {
     opacity: 0.8,

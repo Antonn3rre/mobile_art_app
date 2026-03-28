@@ -2,7 +2,9 @@ import { Image } from 'expo-image';
 import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   TextInput,
   View,
@@ -13,12 +15,45 @@ import { SearchResultCard } from '@/components/search-result-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
+import {
+  addArtToCollection,
+  createCollection,
+  getCollections,
+  upsertArtPiece,
+  type CollectionRow,
+} from '@/database/db';
+
+type SearchResultItem = {
+  id?: string;
+  edmPreview?: string | string[];
+  title?: string | string[];
+  dcDescriptionLangAware?: Record<string, string | string[]> | string | string[] | undefined;
+  year?: string | number | (string | number)[];
+  type?: string;
+};
+
+function getFirstValue(value: string | number | (string | number)[] | undefined) {
+  if (value === undefined || value === null) return '';
+  if (Array.isArray(value)) return String(value[0] ?? '');
+  return String(value);
+}
+
+function getTitle(value: string | string[] | undefined) {
+  if (!value) return '';
+  if (Array.isArray(value)) return value[0] ?? '';
+  return value;
+}
 
 export default function HomeScreen() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [collections, setCollections] = useState<CollectionRow[]>([]);
+  const [selectedItem, setSelectedItem] = useState<SearchResultItem | null>(null);
+  const [collectionName, setCollectionName] = useState('');
+  const [collectionError, setCollectionError] = useState<string | null>(null);
 
   const inputBackground = useThemeColor(
     { light: '#F1F3F5', dark: '#1E1F21' },
@@ -77,6 +112,71 @@ export default function HomeScreen() {
     }
   };
 
+  const refreshCollections = () => {
+    try {
+      setCollections(getCollections());
+    } catch (err) {
+      setCollections([]);
+    }
+  };
+
+  const handleOpenModal = (item: SearchResultItem) => {
+    setSelectedItem(item);
+    setCollectionError(null);
+    setIsModalVisible(true);
+    refreshCollections();
+  };
+
+  const handleCloseModal = () => {
+    setIsModalVisible(false);
+    setCollectionName('');
+    setCollectionError(null);
+  };
+
+  const saveArtPiece = (item: SearchResultItem) => {
+    const id = item.id;
+    if (!id) return;
+    const title = getTitle(item.title);
+    const year = getFirstValue(item.year);
+    const preview = Array.isArray(item.edmPreview) ? item.edmPreview[0] : item.edmPreview;
+    upsertArtPiece({
+      id,
+      title: title || null,
+      imageUrl: preview || null,
+      year: year || null,
+      type: item.type ?? null,
+    });
+  };
+
+  const handleAddToCollection = (collectionId: number) => {
+    if (!selectedItem?.id) return;
+    try {
+      saveArtPiece(selectedItem);
+      addArtToCollection(collectionId, selectedItem.id);
+      handleCloseModal();
+    } catch (err) {
+      setCollectionError("Impossible d'ajouter a la collection");
+    }
+  };
+
+  const handleCreateCollection = () => {
+    const name = collectionName.trim();
+    if (!name) {
+      setCollectionError('Le nom de collection est requis');
+      return;
+    }
+    if (!selectedItem?.id) return;
+
+    try {
+      const collectionId = createCollection(name);
+      saveArtPiece(selectedItem);
+      addArtToCollection(collectionId, selectedItem.id);
+      handleCloseModal();
+    } catch (err) {
+      setCollectionError('Cette collection existe deja');
+    }
+  };
+
   return (
     <ParallaxScrollView
       headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
@@ -127,8 +227,71 @@ export default function HomeScreen() {
       ) : null}
 
       {results.map((item, index) => (
-        <SearchResultCard key={`${item?.id ?? 'result'}-${index}`} item={item} />
+        <SearchResultCard
+          key={`${item?.id ?? 'result'}-${index}`}
+          item={item}
+          onAddToCollection={handleOpenModal}
+        />
       ))}
+
+      <Modal
+        visible={isModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={handleCloseModal}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: inputBackground }]}>
+            <View style={styles.modalHeader}>
+              <ThemedText type="title">Ajouter a une collection</ThemedText>
+              <Pressable onPress={handleCloseModal} style={styles.closeButton}>
+                <ThemedText style={styles.closeButtonText}>Fermer</ThemedText>
+              </Pressable>
+            </View>
+
+            {collectionError ? (
+              <ThemedText style={styles.errorText}>{collectionError}</ThemedText>
+            ) : null}
+
+            <ThemedText style={styles.sectionTitle}>Collections</ThemedText>
+            <ScrollView style={styles.collectionList} contentContainerStyle={styles.collectionListContent}>
+              {collections.length === 0 ? (
+                <ThemedText style={styles.emptyText}>Aucune collection</ThemedText>
+              ) : (
+                collections.map((collection) => (
+                  <Pressable
+                    key={collection.id}
+                    onPress={() => handleAddToCollection(collection.id)}
+                    style={({ pressed }) => [
+                      styles.collectionRow,
+                      pressed ? styles.collectionRowPressed : null,
+                    ]}>
+                    <ThemedText>{collection.name}</ThemedText>
+                    <ThemedText style={styles.collectionCount}>{collection.itemCount}</ThemedText>
+                  </Pressable>
+                ))
+              )}
+            </ScrollView>
+
+            <ThemedText style={styles.sectionTitle}>Nouvelle collection</ThemedText>
+            <TextInput
+              value={collectionName}
+              onChangeText={setCollectionName}
+              placeholder="Nom de la collection"
+              placeholderTextColor={placeholderText}
+              style={[styles.searchInput, { backgroundColor: '#ffffff', color: inputText }]}
+            />
+            <Pressable
+              onPress={handleCreateCollection}
+              style={({ pressed }) => [
+                styles.searchButton,
+                { backgroundColor: buttonColor },
+                pressed ? styles.searchButtonPressed : null,
+              ]}>
+              <ThemedText style={[styles.searchButtonText, { color: buttonTextColor }]}>Creer</ThemedText>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </ParallaxScrollView>
   );
 }
@@ -182,5 +345,57 @@ const styles = StyleSheet.create({
   emptyText: {
     marginBottom: 12,
     opacity: 0.7,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    padding: 20,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  closeButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  closeButtonText: {
+    color: '#0a7ea4',
+    fontWeight: '600',
+  },
+  sectionTitle: {
+    marginTop: 12,
+    marginBottom: 8,
+    fontWeight: '700',
+  },
+  collectionList: {
+    maxHeight: 180,
+  },
+  collectionListContent: {
+    gap: 8,
+    paddingBottom: 8,
+  },
+  collectionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: '#ffffff',
+  },
+  collectionRowPressed: {
+    opacity: 0.8,
+  },
+  collectionCount: {
+    opacity: 0.6,
   },
 });
