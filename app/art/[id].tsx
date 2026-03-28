@@ -6,6 +6,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
+import type { SearchResultItem } from '@/components/search-result-card';
 import {
   addArtToCollection,
   createCollection,
@@ -16,67 +17,7 @@ import {
 } from '@/database/db';
 import { getArtCache } from '@/store/art-cache';
 
-type LangAwareValue = Record<string, string | string[]> | string | string[] | undefined;
-
-type ArtItem = {
-  id?: string;
-  edmPreview?: string | string[];
-  edmIsShownBy?: string | string[];
-  edmIsShownAt?: string | string[];
-  edmObject?: string | string[];
-  title?: string | string[];
-  dcDescriptionLangAware?: LangAwareValue;
-  dcCreator?: string | string[];
-  dcCreatorLangAware?: LangAwareValue;
-  year?: string | number | (string | number)[];
-  type?: string;
-  country?: string | string[];
-  dataProvider?: string | string[];
-  provider?: string | string[];
-};
-
-function getLangText(value: LangAwareValue, lang: string) {
-  if (!value) return '';
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) return value[0] ?? '';
-  const langValue = value[lang];
-  if (!langValue) return '';
-  return Array.isArray(langValue) ? langValue[0] ?? '' : langValue;
-}
-
-function getFirstValue(value: string | number | (string | number)[] | undefined) {
-  if (value === undefined || value === null) return '';
-  if (Array.isArray(value)) return String(value[0] ?? '');
-  return String(value);
-}
-
-function getTitle(value: string | string[] | undefined) {
-  if (!value) return '';
-  if (Array.isArray(value)) return value[0] ?? '';
-  return value;
-}
-
-function getText(value: string | string[] | undefined) {
-  if (!value) return '';
-  if (Array.isArray(value)) return value[0] ?? '';
-  return value;
-}
-
-function getPreviewUrl(item: ArtItem | null) {
-  if (!item) return '';
-  const candidates = [
-    item.edmPreview,
-    item.edmIsShownBy,
-    item.edmIsShownAt,
-    item.edmObject,
-  ];
-  for (const candidate of candidates) {
-    if (!candidate) continue;
-    if (Array.isArray(candidate)) return candidate[0] ?? '';
-    return candidate;
-  }
-  return '';
-}
+type ArtItem = SearchResultItem;
 
 export default function ArtDetailScreen() {
   const params = useLocalSearchParams();
@@ -96,20 +37,16 @@ export default function ArtDetailScreen() {
     }
   }
 
-  const title = getTitle(item?.title);
-  const description =
-    getLangText(item?.dcDescriptionLangAware, 'fr') ||
-    getLangText(item?.dcDescriptionLangAware, 'en');
-  const creator =
-    getLangText(item?.dcCreatorLangAware, 'fr') ||
-    getLangText(item?.dcCreatorLangAware, 'en') ||
-    getText(item?.dcCreator);
-  const year = getFirstValue(item?.year);
-  const type = item?.type ?? '';
-  const country = getText(item?.country);
-  const dataProvider = getText(item?.dataProvider);
-  const provider = getText(item?.provider);
-  const preview = getPreviewUrl(item);
+  const title = item?.title ?? '';
+  const artist = item?.artist ?? '';
+  const period = item?.period ?? '';
+  const domain = Array.isArray(item?.domain) ? item?.domain?.[0] ?? '' : item?.domain ?? '';
+  const museum = item?.museum ?? '';
+  const city = item?.city ?? '';
+  const technique = Array.isArray(item?.technique)
+    ? item?.technique.join(', ')
+    : item?.technique ?? '';
+  const preview = item?.imageUrl ?? '';
 
   const inputBackground = useThemeColor(
     { light: '#F1F3F5', dark: '#1E1F21' },
@@ -140,8 +77,12 @@ export default function ArtDetailScreen() {
       id: item.id,
       title: title || null,
       imageUrl: preview || null,
-      year: year || null,
-      type: item.type ?? null,
+      year: period || null,
+      type: domain || null,
+      artist: artist || null,
+      museum: museum || null,
+      city: city || null,
+      technique: technique || null,
     });
   };
 
@@ -225,54 +166,45 @@ export default function ArtDetailScreen() {
           {title || 'Sans titre'}
         </ThemedText>
 
-        {creator ? (
+        {artist ? (
           <View style={styles.metaRow}>
-            <ThemedText style={styles.metaLabel}>Createur</ThemedText>
-            <ThemedText>{creator}</ThemedText>
+            <ThemedText style={styles.metaLabel}>Artiste</ThemedText>
+            <ThemedText>{artist}</ThemedText>
           </View>
         ) : null}
 
-        {year ? (
+        {period ? (
           <View style={styles.metaRow}>
-            <ThemedText style={styles.metaLabel}>Annee</ThemedText>
-            <ThemedText>{year}</ThemedText>
+            <ThemedText style={styles.metaLabel}>Periode</ThemedText>
+            <ThemedText>{period}</ThemedText>
           </View>
         ) : null}
 
-        {type ? (
+        {domain ? (
           <View style={styles.metaRow}>
-            <ThemedText style={styles.metaLabel}>Type</ThemedText>
-            <ThemedText>{type}</ThemedText>
+            <ThemedText style={styles.metaLabel}>Domaine</ThemedText>
+            <ThemedText>{domain}</ThemedText>
           </View>
         ) : null}
 
-        {country ? (
+        {museum ? (
           <View style={styles.metaRow}>
-            <ThemedText style={styles.metaLabel}>Pays</ThemedText>
-            <ThemedText>{country}</ThemedText>
+            <ThemedText style={styles.metaLabel}>Musee</ThemedText>
+            <ThemedText>{museum}</ThemedText>
           </View>
         ) : null}
 
-        {dataProvider ? (
+        {city ? (
           <View style={styles.metaRow}>
-            <ThemedText style={styles.metaLabel}>Institution</ThemedText>
-            <ThemedText>{dataProvider}</ThemedText>
+            <ThemedText style={styles.metaLabel}>Ville</ThemedText>
+            <ThemedText>{city}</ThemedText>
           </View>
         ) : null}
 
-        {provider ? (
+        {technique ? (
           <View style={styles.metaRow}>
-            <ThemedText style={styles.metaLabel}>Fournisseur</ThemedText>
-            <ThemedText>{provider}</ThemedText>
-          </View>
-        ) : null}
-
-        {description ? (
-          <View style={styles.descriptionBlock}>
-            <ThemedText type="defaultSemiBold" style={styles.metaLabel}>
-              Description
-            </ThemedText>
-            <ThemedText style={styles.descriptionText}>{description}</ThemedText>
+            <ThemedText style={styles.metaLabel}>Technique</ThemedText>
+            <ThemedText>{technique}</ThemedText>
           </View>
         ) : null}
       </ScrollView>

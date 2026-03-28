@@ -14,7 +14,11 @@ export const initDb = () => {
         title TEXT,
         imageUrl TEXT,
         year TEXT,
-        type TEXT
+        type TEXT,
+        artist TEXT,
+        museum TEXT,
+        city TEXT,
+        technique TEXT
       );
 
       CREATE TABLE IF NOT EXISTS collections (
@@ -31,6 +35,18 @@ export const initDb = () => {
         FOREIGN KEY (art_piece_id) REFERENCES art_pieces (id) ON DELETE CASCADE
       );
     `);
+    const columns = db.getAllSync<{ name: string }>('PRAGMA table_info(art_pieces)');
+    const columnNames = new Set(columns.map((column) => column.name));
+    const missingColumns = [
+      { name: 'artist', type: 'TEXT' },
+      { name: 'museum', type: 'TEXT' },
+      { name: 'city', type: 'TEXT' },
+      { name: 'technique', type: 'TEXT' },
+    ].filter((column) => !columnNames.has(column.name));
+
+    missingColumns.forEach((column) => {
+      db.runSync(`ALTER TABLE art_pieces ADD COLUMN ${column.name} ${column.type}`);
+    });
     console.log("Base de données initialisée avec succès");
   } catch (error) {
     console.error("Erreur lors de l'initialisation de la DB", error);
@@ -50,6 +66,10 @@ export type ArtPieceRow = {
   imageUrl: string | null;
   year: string | null;
   type: string | null;
+  artist: string | null;
+  museum: string | null;
+  city: string | null;
+  technique: string | null;
 };
 
 export const getCollections = () => {
@@ -76,13 +96,17 @@ export const createCollection = (name: string) => {
 export const upsertArtPiece = (artPiece: ArtPieceRow) => {
   db.runSync(
     `
-    INSERT INTO art_pieces (id, title, imageUrl, year, type)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO art_pieces (id, title, imageUrl, year, type, artist, museum, city, technique)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       imageUrl = excluded.imageUrl,
       year = excluded.year,
-      type = excluded.type
+      type = excluded.type,
+      artist = excluded.artist,
+      museum = excluded.museum,
+      city = excluded.city,
+      technique = excluded.technique
   `,
     [
       artPiece.id,
@@ -90,6 +114,10 @@ export const upsertArtPiece = (artPiece: ArtPieceRow) => {
       artPiece.imageUrl,
       artPiece.year,
       artPiece.type,
+      artPiece.artist,
+      artPiece.museum,
+      artPiece.city,
+      artPiece.technique,
     ]
   );
 };
@@ -116,7 +144,11 @@ export const getCollectionItems = (collectionId: number) => {
       ap.title,
       ap.imageUrl,
       ap.year,
-      ap.type
+      ap.type,
+      ap.artist,
+      ap.museum,
+      ap.city,
+      ap.technique
     FROM art_pieces ap
     INNER JOIN collection_members cm ON cm.art_piece_id = ap.id
     WHERE cm.collection_id = ?

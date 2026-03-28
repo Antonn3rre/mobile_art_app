@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 
-import { SearchResultCard } from '@/components/search-result-card';
+import { SearchResultCard, type SearchResultItem } from '@/components/search-result-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
@@ -26,21 +26,17 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import { setArtCache } from '@/store/art-cache';
 
-type SearchResultItem = {
-  id?: string;
-  edmPreview?: string | string[];
-  title?: string | string[];
-  year?: string | number | (string | number)[];
-  type?: string;
-};
-
 function toSearchItem(row: ArtPieceRow): SearchResultItem {
   return {
     id: row.id,
     title: row.title ?? '',
-    edmPreview: row.imageUrl ?? undefined,
-    year: row.year ?? undefined,
-    type: row.type ?? undefined,
+    imageUrl: row.imageUrl ?? undefined,
+    period: row.year ?? undefined,
+    domain: row.type ?? undefined,
+    artist: row.artist ?? undefined,
+    museum: row.museum ?? undefined,
+    city: row.city ?? undefined,
+    technique: row.technique ?? undefined,
   };
 }
 
@@ -120,20 +116,16 @@ export default function CollectionDetailScreen() {
     try {
       upsertArtPiece({
         id: selectedItem.id,
-        title: typeof selectedItem.title === 'string' ? selectedItem.title : null,
-        imageUrl:
-          typeof selectedItem.edmPreview === 'string'
-            ? selectedItem.edmPreview
-            : Array.isArray(selectedItem.edmPreview)
-            ? selectedItem.edmPreview[0]
-            : null,
-        year:
-          typeof selectedItem.year === 'string' || typeof selectedItem.year === 'number'
-            ? String(selectedItem.year)
-            : Array.isArray(selectedItem.year)
-            ? String(selectedItem.year[0] ?? '')
-            : null,
-        type: selectedItem.type ?? null,
+        title: selectedItem.title ?? null,
+        imageUrl: selectedItem.imageUrl ?? null,
+        year: selectedItem.period ?? null,
+        type: Array.isArray(selectedItem.domain) ? selectedItem.domain[0] : selectedItem.domain ?? null,
+        artist: selectedItem.artist ?? null,
+        museum: selectedItem.museum ?? null,
+        city: selectedItem.city ?? null,
+        technique: Array.isArray(selectedItem.technique)
+          ? selectedItem.technique.join(', ')
+          : selectedItem.technique ?? null,
       });
       addArtToCollection(targetCollectionId, selectedItem.id);
       handleCloseModal();

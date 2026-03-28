@@ -12,7 +12,7 @@ import {
 import { useRouter } from 'expo-router';
 
 import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { SearchResultCard } from '@/components/search-result-card';
+import { SearchResultCard, type SearchResultItem } from '@/components/search-result-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useThemeColor } from '@/hooks/use-theme-color';
@@ -25,44 +25,120 @@ import {
   type CollectionRow,
 } from '@/database/db';
 
-type SearchResultItem = {
-  id?: string;
-  edmPreview?: string | string[];
-  title?: string | string[];
-  dcDescriptionLangAware?: Record<string, string | string[]> | string | string[] | undefined;
-  year?: string | number | (string | number)[];
-  type?: string;
+type WikidataSearchItem = {
+  id: string;
+  label?: string;
+  description?: string;
 };
 
-function getFirstValue(value: string | number | (string | number)[] | undefined) {
-  if (value === undefined || value === null) return '';
-  if (Array.isArray(value)) return String(value[0] ?? '');
-  return String(value);
+type WikidataEntity = {
+  id: string;
+  labels?: Record<string, string>;
+  descriptions?: Record<string, string>;
+  statements?: Record<string, Array<{ value?: { content?: unknown } }>>;
+};
+
+const entityCache = new Map<string, WikidataEntity | null>();
+const labelCache = new Map<string, string>();
+
+function getString(value: string | undefined | null) {
+  return value?.trim() ?? '';
 }
 
-function getTitle(value: string | string[] | undefined) {
+function getLabel(labels?: Record<string, string>) {
+  if (!labels) return '';
+  return labels.fr || labels.en || Object.values(labels)[0] || '';
+}
+
+function getStatementValues(entity: WikidataEntity, property: string) {
+  const statements = entity.statements?.[property] ?? [];
+  return statements
+    .map((statement) => statement.value?.content)
+    .filter((value): value is NonNullable<unknown> => Boolean(value));
+}
+
+function formatTimeValue(value: unknown) {
   if (!value) return '';
-  if (Array.isArray(value)) return value[0] ?? '';
-  return value;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && value !== null && 'time' in value) {
+    const timeValue = String((value as { time?: string }).time ?? '');
+    const match = timeValue.match(/-?\d{4}/);
+    return match ? match[0] : timeValue;
+  }
+  return '';
 }
 
-function buildFieldQuery(field: string, value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const tokens = trimmed
-    .split(/\s+/)
-    .map((token) => token.replace(/"/g, ''))
-    .filter(Boolean);
-  if (tokens.length === 0) return null;
-  const exact = `${field}:"${tokens.join(' ')}"`;
-  const wildcard = tokens.map((token) => `${field}:${token}*`).join(' AND ');
-  return `(${exact} OR (${wildcard}))`;
+function buildImageUrl(filename?: string) {
+  if (!filename) return undefined;
+  return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(filename)}`;
+}
+
+async function fetchEntity(id: string) {
+  if (entityCache.has(id)) {
+    return entityCache.get(id) ?? null;
+  }
+  try {
+    const response = await fetch(
+      `https://www.wikidata.org/w/rest.php/wikibase/v1/entities/items/${id}`,
+      {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'ArtApp/1.0 (contact@example.com)',
+          Accept: 'application/json',
+        },
+      }
+    );
+    if (!response.ok) {
+      entityCache.set(id, null);
+      return null;
+    }
+    const data = (await response.json()) as WikidataEntity;
+    entityCache.set(id, data);
+    return data;
+  } catch (err) {
+    entityCache.set(id, null);
+    return null;
+  }
+}
+
+async function getEntityLabel(id: string) {
+  if (labelCache.has(id)) {
+    return labelCache.get(id) ?? '';
+  }
+  const entity = await fetchEntity(id);
+  const label = getLabel(entity?.labels) || id;
+  labelCache.set(id, label);
+  return label;
+}
+
+async function resolveValueToLabel(value: unknown) {
+  if (!value) return '';
+  if (typeof value === 'string') {
+    if (value.startsWith('Q')) {
+      return await getEntityLabel(value);
+    }
+    return value;
+  }
+  return '';
+}
+
+async function resolveValuesToLabels(values: unknown[]) {
+  const labels = await Promise.all(values.map((value) => resolveValueToLabel(value)));
+  return labels.filter(Boolean);
+}
+
+function extractYear(value?: string) {
+  if (!value) return null;
+  const match = value.match(/\b(\d{4})\b/);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isNaN(parsed) ? null : parsed;
 }
 
 export default function HomeScreen() {
   const router = useRouter();
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<SearchResultItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -104,47 +180,30 @@ export default function HomeScreen() {
   const handleSearch = async () => {
     const trimmed = query.trim();
     const filters: string[] = [];
-    const queryParts: string[] = [];
-
-    if (trimmed) {
-      queryParts.push(trimmed);
-    }
+    const authorValue = author.trim();
+    const titleValue = title.trim();
 
     if (showAdvanced) {
-      const authorValue = author.trim();
-      const titleValue = title.trim();
       const yearFromValue = yearFrom.trim();
       const yearToValue = yearTo.trim();
       const mediaTypeValue = mediaType.trim().toUpperCase();
 
-      const authorQuery = buildFieldQuery('who', authorValue);
-      const titleQuery = buildFieldQuery('title', titleValue);
-      if (authorQuery) {
-        queryParts.push(authorQuery);
-      }
-      if (titleQuery) {
-        queryParts.push(titleQuery);
-      }
-      if (yearFromValue && yearToValue) {
-        filters.push(`YEAR:[${yearFromValue} TO ${yearToValue}]`);
-      } else if (yearFromValue) {
-        filters.push(`YEAR:${yearFromValue}`);
-      } else if (yearToValue) {
-        filters.push(`YEAR:${yearToValue}`);
-      }
-      if (mediaTypeValue) {
-        filters.push(`TYPE:${mediaTypeValue}`);
-      }
+      if (authorValue) filters.push(`author:${authorValue}`);
+      if (titleValue) filters.push(`title:${titleValue}`);
+      if (yearFromValue) filters.push(`yearFrom:${yearFromValue}`);
+      if (yearToValue) filters.push(`yearTo:${yearToValue}`);
+      if (mediaTypeValue) filters.push(`media:${mediaTypeValue}`);
     }
 
-    if (queryParts.length === 0 && filters.length === 0) {
+    const searchTerm = trimmed || authorValue || titleValue;
+
+    if (!searchTerm && filters.length === 0) {
       setResults([]);
       return;
     }
 
-    const apiKey = process.env.EXPO_PUBLIC_API_KEY ?? process.env.API_KEY;
-    if (!apiKey) {
-      setError("Cle API manquante");
+    if (!searchTerm) {
+      setResults([]);
       return;
     }
 
@@ -153,25 +212,144 @@ export default function HomeScreen() {
 
     try {
       const params = new URLSearchParams({
-        wskey: apiKey,
-        query: queryParts.length > 0 ? queryParts.join(' AND ') : '*',
-        thumbnail: 'true',
-        rows: '15',
-        profile: 'minimal',
+        action: 'wbsearchentities',
+        search: searchTerm,
+        language: 'fr',
+        format: 'json',
+        limit: '30',
+        origin: '*',
       });
-      filters.forEach((filter) => {
-        params.append('qf', filter);
+      const requestUrl = `https://www.wikidata.org/w/api.php?${params.toString()}`;
+      console.log('Wikidata search URL:', requestUrl);
+      const response = await fetch(requestUrl, {
+        method: 'GET',
+        headers: {
+          'User-Agent': 'ArtApp/1.0 (contact@example.com)',
+          Accept: 'application/json',
+        },
       });
-      const response = await fetch(`https://api.europeana.eu/record/v2/search.json?${params.toString()}`);
+      console.log('Wikidata search status:', response.status);
       if (!response.ok) {
         throw new Error('Request failed');
       }
       const data = await response.json();
-      if (Array.isArray(data?.items) && data.items.length > 0) {
-        console.log('Europeana first item:', data.items[0]);
-      }
-      const items = Array.isArray(data?.items) ? data.items : [];
-      setResults(items);
+      const items = Array.isArray(data?.search) ? data.search : [];
+      console.log('Wikidata search count:', items.length);
+
+      const normalized = (await Promise.all(
+        items.map(async (item: WikidataSearchItem) => {
+          const entity = await fetchEntity(item.id);
+          if (!entity) return null;
+
+          const title = getLabel(entity.labels) || item.label || 'Sans titre';
+          labelCache.set(entity.id, title);
+
+          const imageValue = getStatementValues(entity, 'P18')[0];
+          const imageUrl = buildImageUrl(
+            typeof imageValue === 'string' ? imageValue : undefined
+          );
+
+          const artistLabels = await resolveValuesToLabels([
+            ...getStatementValues(entity, 'P170'),
+            ...getStatementValues(entity, 'P50'),
+          ]);
+          const artist = artistLabels[0] || 'Artiste inconnu';
+
+          const periodValue = getStatementValues(entity, 'P571')[0];
+          const period = formatTimeValue(periodValue) || undefined;
+
+          const museumLabels = await resolveValuesToLabels([
+            ...getStatementValues(entity, 'P195'),
+            ...getStatementValues(entity, 'P276'),
+          ]);
+          const museum = museumLabels[0] || undefined;
+
+          const cityLabels = await resolveValuesToLabels(
+            getStatementValues(entity, 'P131')
+          );
+          const city = cityLabels[0] || undefined;
+
+          const techniqueLabels = await resolveValuesToLabels([
+            ...getStatementValues(entity, 'P186'),
+            ...getStatementValues(entity, 'P2079'),
+          ]);
+
+          const domainLabels = await resolveValuesToLabels(
+            getStatementValues(entity, 'P31')
+          );
+
+          return {
+            id: entity.id,
+            title,
+            artist,
+            imageUrl,
+            period,
+            museum,
+            city,
+            technique: techniqueLabels.length ? techniqueLabels : undefined,
+            domain: domainLabels.length ? domainLabels : undefined,
+          } satisfies SearchResultItem;
+        })
+      )) as Array<SearchResultItem | null>;
+
+      const filteredNormalized = normalized.filter(
+        (item): item is SearchResultItem => Boolean(item)
+      );
+
+      const filtered = showAdvanced
+        ? filteredNormalized.filter((item: SearchResultItem) => {
+            const authorValue = author.trim().toLowerCase();
+            const titleValue = title.trim().toLowerCase();
+            const mediaValue = mediaType.trim().toLowerCase();
+            const yearFromValue = yearFrom.trim();
+            const yearToValue = yearTo.trim();
+
+          const artistValue = (item.artist ?? '').toLowerCase();
+          const titleText = (item.title ?? '').toLowerCase();
+
+          if (authorValue && !artistValue.includes(authorValue)) {
+            return false;
+          }
+          if (titleValue && !titleText.includes(titleValue)) {
+            return false;
+          }
+
+          const itemYear = extractYear(item.period ?? '') ?? null;
+          if (yearFromValue) {
+            const from = Number(yearFromValue);
+            if (!Number.isNaN(from) && (!itemYear || itemYear < from)) {
+              return false;
+            }
+          }
+          if (yearToValue) {
+            const to = Number(yearToValue);
+            if (!Number.isNaN(to) && (!itemYear || itemYear > to)) {
+              return false;
+            }
+          }
+
+          if (mediaValue) {
+            const domainValues = Array.isArray(item.domain)
+              ? item.domain
+              : item.domain
+                ? [item.domain]
+                : [];
+            const techniqueValues = Array.isArray(item.technique)
+              ? item.technique
+              : item.technique
+                ? [item.technique]
+                : [];
+            const haystack = [...domainValues, ...techniqueValues].join(' ').toLowerCase();
+            if (!haystack.includes(mediaValue)) {
+              return false;
+            }
+          }
+
+          return true;
+        })
+        : filteredNormalized;
+
+      setResults(filtered);
     } catch (err) {
       setError('Impossible de charger les resultats');
     } finally {
@@ -203,15 +381,19 @@ export default function HomeScreen() {
   const saveArtPiece = (item: SearchResultItem) => {
     const id = item.id;
     if (!id) return;
-    const title = getTitle(item.title);
-    const year = getFirstValue(item.year);
-    const preview = Array.isArray(item.edmPreview) ? item.edmPreview[0] : item.edmPreview;
+    const domainValue = Array.isArray(item.domain) ? item.domain[0] : item.domain;
     upsertArtPiece({
       id,
-      title: title || null,
-      imageUrl: preview || null,
-      year: year || null,
-      type: item.type ?? null,
+      title: item.title || null,
+      imageUrl: item.imageUrl ?? null,
+      year: item.period ?? null,
+      type: domainValue ?? null,
+      artist: item.artist ?? null,
+      museum: item.museum ?? null,
+      city: item.city ?? null,
+      technique: Array.isArray(item.technique)
+        ? item.technique.join(', ')
+        : item.technique ?? null,
     });
   };
 
@@ -245,17 +427,17 @@ export default function HomeScreen() {
   };
 
   return (
-      <ParallaxScrollView
-        headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-        headerImage={
-          <Image
-            source={require('@/assets/images/L_etang_aux_nympheas_de_Claude_Monet_copie.jpg')}
-            style={styles.headerArtwork}
-            contentFit="cover"
-          />
-        }>
+    <ParallaxScrollView
+      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
+      headerImage={
+        <Image
+          source={require('@/assets/images/L_etang_aux_nympheas_de_Claude_Monet_copie.jpg')}
+          style={styles.headerArtwork}
+          contentFit="cover"
+        />
+      }>
       <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Recherche Europeana</ThemedText>
+        <ThemedText type="title">Recherche Wikidata</ThemedText>
       </ThemedView>
 
       <ThemedView style={styles.searchContainer}>
@@ -325,7 +507,7 @@ export default function HomeScreen() {
               />
             </View>
             <View style={styles.typeRow}>
-              {['IMAGE', 'VIDEO', 'SOUND', 'TEXT'].map((typeValue) => (
+              {['PEINTURE', 'SCULPTURE', 'DESSIN', 'OBJET'].map((typeValue) => (
                 <Pressable
                   key={typeValue}
                   onPress={() =>

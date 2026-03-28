@@ -4,52 +4,28 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 
-type LangAwareValue = Record<string, string | string[]> | string | string[] | undefined;
-
-type SearchResultItem = {
+export type SearchResultItem = {
   id?: string;
-  edmPreview?: string | string[];
-  title?: string | string[];
-  dcDescriptionLangAware?: LangAwareValue;
-  year?: string | number | (string | number)[];
-  type?: string;
+  title?: string;
+  artist?: string;
+  imageUrl?: string;
+  period?: string;
+  museum?: string;
+  city?: string;
+  technique?: string[] | string;
+  domain?: string[] | string;
 };
-
-function getLangText(value: LangAwareValue, lang: string) {
-  if (!value) return '';
-  if (typeof value === 'string') return value;
-  if (Array.isArray(value)) return value[0] ?? '';
-  const langValue = value[lang];
-  if (!langValue) return '';
-  return Array.isArray(langValue) ? langValue[0] ?? '' : langValue;
-}
-
-function getFirstValue(value: string | number | (string | number)[] | undefined) {
-  if (value === undefined || value === null) return '';
-  if (Array.isArray(value)) return String(value[0] ?? '');
-  return String(value);
-}
-
-function getTitle(value: string | string[] | undefined) {
-  if (!value) return '';
-  if (Array.isArray(value)) return value[0] ?? '';
-  return value;
-}
-
-function truncateDescription(text: string, limit: number) {
-  if (!text) return '';
-  if (text.length <= limit) return text;
-  return `${text.slice(0, limit)}...`;
-}
 
 function getTypeColor(type?: string) {
   switch ((type ?? '').toUpperCase()) {
-    case 'IMAGE':
+    case 'PEINTURE':
       return '#2F9E44';
-    case 'SOUND':
+    case 'SCULPTURE':
       return '#3B5BDB';
-    case 'TEXT':
+    case 'DESSIN':
       return '#F08C00';
+    case 'OBJET':
+      return '#9C36B5';
     default:
       return '#868E96';
   }
@@ -66,12 +42,15 @@ export function SearchResultCard({
   onRemoveFromCollection?: (item: SearchResultItem) => void;
   onPress?: (item: SearchResultItem) => void;
 }) {
-  const title = getTitle(item.title);
-  const descriptionRaw = getLangText(item.dcDescriptionLangAware, 'fr');
-  const description = truncateDescription(descriptionRaw, 10);
-  const year = getFirstValue(item.year);
-  const type = item.type ?? '';
-  const preview = Array.isArray(item.edmPreview) ? item.edmPreview[0] : item.edmPreview;
+  const title = item.title?.trim() ?? '';
+  const artist = item.artist?.trim() ?? '';
+  const period = item.period?.trim() ?? '';
+  const type = Array.isArray(item.domain) ? item.domain[0] : item.domain ?? '';
+  const preview = item.imageUrl;
+  const museumLine = [item.museum, item.city].filter(Boolean).join(' • ');
+  const techniqueLine = Array.isArray(item.technique)
+    ? item.technique.join(', ')
+    : item.technique ?? '';
   const canAdd = Boolean(onAddToCollection && item.id);
 
   const cardContent = (
@@ -121,10 +100,10 @@ export function SearchResultCard({
               <ThemedText style={styles.badgeText}>{type}</ThemedText>
             </View>
           ) : null}
-          {description ? (
-            <ThemedText style={styles.description}>{description}</ThemedText>
-          ) : null}
-          {year ? <ThemedText style={styles.meta}>Annee: {year}</ThemedText> : null}
+          {artist ? <ThemedText style={styles.meta}>Artiste: {artist}</ThemedText> : null}
+          {period ? <ThemedText style={styles.meta}>Periode: {period}</ThemedText> : null}
+          {museumLine ? <ThemedText style={styles.meta}>{museumLine}</ThemedText> : null}
+          {techniqueLine ? <ThemedText style={styles.meta}>{techniqueLine}</ThemedText> : null}
         </View>
       </View>
     </ThemedView>
@@ -236,9 +215,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     lineHeight: 20,
-  },
-  description: {
-    opacity: 0.8,
   },
   meta: {
     opacity: 0.7,
