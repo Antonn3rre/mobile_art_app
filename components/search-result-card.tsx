@@ -14,21 +14,59 @@ export type SearchResultItem = {
   city?: string;
   technique?: string[] | string;
   domain?: string[] | string;
+  typeLabel?: string;
+};
+
+const ART_TYPES_MAP: Record<string, string> = {
+  Q3305213: 'Peinture',
+  Q1028181: 'Dessin',
+  Q11634: 'Sculpture',
+  Q125191: 'Photo',
+  Q11060274: 'Gravure',
+  Q93184: 'Installation',
+  Q870918: 'Tapisserie',
+  Q1117439: 'Lithographie',
+  Q219423: 'Manuscrit',
+  Q17534: 'Fresque',
+  Q18761202: 'Numerique',
+  Q327313: "Objet d'art",
+};
+
+const TYPE_COLOR_MAP: Record<string, string> = {
+  Q3305213: '#2F9E44',
+  Q1028181: '#F08C00',
+  Q11634: '#3B5BDB',
+  Q125191: '#7048E8',
+  Q11060274: '#E8590C',
+  Q93184: '#1C7ED6',
+  Q870918: '#D9480F',
+  Q1117439: '#5F3DC4',
+  Q219423: '#1864AB',
+  Q17534: '#C92A2A',
+  Q18761202: '#2B8A3E',
+  Q327313: '#868E96',
 };
 
 function getTypeColor(type?: string) {
-  switch ((type ?? '').toUpperCase()) {
-    case 'PEINTURE':
-      return '#2F9E44';
-    case 'SCULPTURE':
-      return '#3B5BDB';
-    case 'DESSIN':
-      return '#F08C00';
-    case 'OBJET':
-      return '#9C36B5';
-    default:
-      return '#868E96';
-  }
+  if (!type) return '#868E96';
+  if (TYPE_COLOR_MAP[type]) return TYPE_COLOR_MAP[type];
+  const normalized = type.toLowerCase();
+  if (normalized.includes('peinture')) return '#2F9E44';
+  if (normalized.includes('sculpture')) return '#3B5BDB';
+  if (normalized.includes('dessin')) return '#F08C00';
+  if (normalized.includes('photo')) return '#7048E8';
+  if (normalized.includes('gravure')) return '#E8590C';
+  return '#868E96';
+}
+
+function normalizeTypeLabel(label?: string) {
+  if (!label) return '';
+  const normalized = label.toLowerCase();
+  if (normalized.includes('bande dessin')) return 'Bande dessinee';
+  if (normalized.includes('version')) return 'Version';
+  if (normalized.includes('edition') || normalized.includes('édition')) return 'Edition';
+  if (normalized.includes('traduction')) return 'Traduction';
+  return label;
 }
 
 export function SearchResultCard({
@@ -45,7 +83,11 @@ export function SearchResultCard({
   const title = item.title?.trim() ?? '';
   const artist = item.artist?.trim() ?? '';
   const period = item.period?.trim() ?? '';
-  const type = Array.isArray(item.domain) ? item.domain[0] : item.domain ?? '';
+  const typeId = Array.isArray(item.domain) ? item.domain[0] : item.domain ?? '';
+  const fallbackType = typeId.startsWith('Q') ? "Oeuvre d'art" : typeId;
+  const typeLabel = normalizeTypeLabel(item.typeLabel);
+  const type = typeLabel || ART_TYPES_MAP[typeId] || fallbackType;
+  const badgeColor = getTypeColor(typeId || type);
   const preview = item.imageUrl;
   const museumLine = [item.museum, item.city].filter(Boolean).join(' • ');
   const techniqueLine = Array.isArray(item.technique)
@@ -96,7 +138,7 @@ export function SearchResultCard({
             </View>
           </View>
           {type ? (
-            <View style={[styles.badge, { backgroundColor: getTypeColor(type) }]}>
+            <View style={[styles.badge, { backgroundColor: badgeColor }]}>
               <ThemedText style={styles.badgeText}>{type}</ThemedText>
             </View>
           ) : null}

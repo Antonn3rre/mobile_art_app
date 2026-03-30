@@ -38,6 +38,47 @@ type WikidataEntity = {
   statements?: Record<string, Array<{ value?: { content?: unknown } }>>;
 };
 
+const ART_TYPE_ID_MAP: Record<string, string> = {
+  PEINTURE: 'Q3305213',
+  DESSIN: 'Q1028181',
+  SCULPTURE: 'Q11634',
+  PHOTOGRAPHIE: 'Q125191',
+  GRAVURE: 'Q11060274', // Inclut eaux-fortes, burins
+  ESTAMPE: 'Q11060274', // Souvent confondu avec gravure, même ID racine
+  INSTALLATION: 'Q93184',
+  TAPISSERIE: 'Q870918',
+  LITHOGRAPHIE: 'Q1117439',
+  MANUSCRIT: 'Q219423',
+  FRESQUE: 'Q17534',
+  NUMERIQUE: 'Q18761202',
+  OBJET: 'Q327313',     // Objet d'art (Arts décoratifs)
+  CERAMIQUE: 'Q45621',   // Poterie, vases grecs, porcelaine
+  VITRAIL: 'Q1473346',   // Très présent dans les églises/musées français
+  AQUARELLE: 'Q18761202', // Souvent classé à part du dessin
+  ARCHITECTURE: 'Q12271', // Plans, maquettes, bâtiments
+  MOBILIER: 'Q14745',    // Meubles d'art
+};
+
+const ART_ONLY_TYPE_IDS = Array.from(
+  new Set([
+    ...Object.values(ART_TYPE_ID_MAP),
+    'Q838948', // Oeuvre d'art
+  ])
+);
+
+const ART_TYPE_OPTIONS = [
+  { label: 'Toutes les œuvres', value: 'ALL' }, // Utile pour réinitialiser
+  { label: 'Peinture', value: 'PEINTURE' },
+  { label: 'Dessin & Aquarelle', value: 'DESSIN' },
+  { label: 'Sculpture', value: 'SCULPTURE' },
+  { label: 'Photographie', value: 'PHOTOGRAPHIE' },
+  { label: 'Estampe & Gravure', value: 'GRAVURE' },
+  { label: 'Arts Décoratifs', value: 'OBJET' }, // Regroupe Objet, Céramique, Mobilier
+  { label: 'Art Numérique', value: 'NUMERIQUE' },
+  { label: 'Installation', value: 'INSTALLATION' },
+  { label: 'Architecture', value: 'ARCHITECTURE' },
+];
+
 const entityCache = new Map<string, WikidataEntity | null>();
 const labelCache = new Map<string, string>();
 
@@ -71,6 +112,44 @@ function formatTimeValue(value: unknown) {
 function buildImageUrl(filename?: string) {
   if (!filename) return undefined;
   return `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(filename)}`;
+}
+
+function extractQidFromUrl(value?: string) {
+  if (!value) return '';
+  const parts = value.split('/');
+  return parts[parts.length - 1] || '';
+}
+
+function buildSparqlQuery(itemIds: string[], typeIds: string[]) {
+  const itemValues = itemIds.length > 0
+    ? `VALUES ?item { ${itemIds.map((id) => `wd:${id}`).join(' ')} }`
+    : '';
+  const typeValues = typeIds.length > 0
+    ? `VALUES ?baseType { ${typeIds.map((typeId) => `wd:${typeId}`).join(' ')} }`
+    : '';
+
+  return `
+PREFIX wd: <http://www.wikidata.org/entity/>
+PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX bd: <http://www.bigdata.com/rdf#>
+SELECT ?item ?itemLabel ?image ?creatorLabel ?inception ?collectionLabel ?locationLabel ?adminLabel ?type ?typeLabel ?baseType ?baseTypeLabel WHERE {
+  ${itemValues}
+  ${typeValues}
+  ?item wdt:P31 ?type .
+  ?type wdt:P279* ?baseType .
+
+  OPTIONAL { ?item wdt:P18 ?image . }
+  OPTIONAL { ?item wdt:P170 ?creator . }
+  OPTIONAL { ?item wdt:P50 ?creator . }
+  OPTIONAL { ?item wdt:P571 ?inception . }
+  OPTIONAL { ?item wdt:P195 ?collection . }
+  OPTIONAL { ?item wdt:P276 ?location . }
+  OPTIONAL { ?item wdt:P131 ?admin . }
+
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "fr,en". }
+}
+LIMIT 30
+`;
 }
 
 async function fetchEntity(id: string) {
@@ -135,6 +214,85 @@ function extractYear(value?: string) {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
+function normalizeKeyPart(value?: string) {
+  if (!value) return '';
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+const TYPE_PRIORITY = [
+  'Q3305213',
+  'Q11634',
+  'Q1028181',
+  'Q125191',
+  'Q11060274',
+  'Q1117439',
+  'Q93184',
+  'Q870918',
+  'Q219423',
+  'Q17534',
+  'Q18761202',
+  'Q327313',
+  'Q838948',
+];
+
+function getTypeId(item: SearchResultItem) {
+  return Array.isArray(item.domain) ? item.domain[0] : item.domain ?? '';
+}
+
+function getTypePriority(typeId: string) {
+  const index = TYPE_PRIORITY.indexOf(typeId);
+  return index === -1 ? TYPE_PRIORITY.length : index;
+}
+
+function scoreItem(item: SearchResultItem) {
+  let score = 0;
+  if (item.imageUrl) score += 3;
+  if (item.museum || item.city) score += 2;
+  if (item.technique) score += 1;
+  if (item.period) score += 1;
+  return score;
+}
+
+function pickBestItem(items: SearchResultItem[]) {
+  return items.reduce((best, current) => {
+    const bestScore = scoreItem(best);
+    const currentScore = scoreItem(current);
+    if (currentScore > bestScore) return current;
+    if (currentScore < bestScore) return best;
+    const bestPriority = getTypePriority(getTypeId(best));
+    const currentPriority = getTypePriority(getTypeId(current));
+    if (currentPriority < bestPriority) return current;
+    if (currentPriority > bestPriority) return best;
+    const bestTitle = (best.title ?? '').length;
+    const currentTitle = (current.title ?? '').length;
+    if (currentTitle > bestTitle) return current;
+    if (currentTitle < bestTitle) return best;
+    return best;
+  });
+}
+
+function dedupeResults(items: SearchResultItem[]) {
+  const grouped = new Map<string, SearchResultItem[]>();
+  for (const item of items) {
+    const title = normalizeKeyPart(item.title || '');
+    const artist = normalizeKeyPart(item.artist || 'artiste inconnu');
+    const period = normalizeKeyPart(item.period || '');
+    const key = period ? `${title}|${artist}|${period}` : `${title}|${artist}`;
+    const list = grouped.get(key);
+    if (list) {
+      list.push(item);
+    } else {
+      grouped.set(key, [item]);
+    }
+  }
+  return Array.from(grouped.values()).map((group) => pickBestItem(group));
+}
+
 export default function HomeScreen() {
   const router = useRouter();
   const [query, setQuery] = useState('');
@@ -151,7 +309,7 @@ export default function HomeScreen() {
   const [title, setTitle] = useState('');
   const [yearFrom, setYearFrom] = useState('');
   const [yearTo, setYearTo] = useState('');
-  const [mediaType, setMediaType] = useState('');
+  const [mediaTypes, setMediaTypes] = useState<string[]>([]);
 
   const inputBackground = useThemeColor(
     { light: '#F1F3F5', dark: '#1E1F21' },
@@ -173,36 +331,41 @@ export default function HomeScreen() {
       title.trim().length > 0 ||
       yearFrom.trim().length > 0 ||
       yearTo.trim().length > 0 ||
-      mediaType.trim().length > 0
+      mediaTypes.length > 0
     );
-  }, [author, mediaType, query, showAdvanced, title, yearFrom, yearTo]);
+  }, [author, mediaTypes, query, showAdvanced, title, yearFrom, yearTo]);
 
   const handleSearch = async () => {
     const trimmed = query.trim();
     const filters: string[] = [];
     const authorValue = author.trim();
     const titleValue = title.trim();
+    let typeIds: string[] = ART_ONLY_TYPE_IDS;
 
     if (showAdvanced) {
       const yearFromValue = yearFrom.trim();
       const yearToValue = yearTo.trim();
-      const mediaTypeValue = mediaType.trim().toUpperCase();
+      const selectedTypes = mediaTypes
+        .map((value) => ART_TYPE_ID_MAP[value])
+        .filter((value): value is string => Boolean(value));
+      typeIds = selectedTypes.length > 0 ? selectedTypes : ART_ONLY_TYPE_IDS;
 
       if (authorValue) filters.push(`author:${authorValue}`);
       if (titleValue) filters.push(`title:${titleValue}`);
       if (yearFromValue) filters.push(`yearFrom:${yearFromValue}`);
       if (yearToValue) filters.push(`yearTo:${yearToValue}`);
-      if (mediaTypeValue) filters.push(`media:${mediaTypeValue}`);
+      if (mediaTypes.length > 0) filters.push('media:multi');
     }
 
     const searchTerm = trimmed || authorValue || titleValue;
+    const useSparql = typeIds.length > 0;
 
     if (!searchTerm && filters.length === 0) {
       setResults([]);
       return;
     }
 
-    if (!searchTerm) {
+    if (!searchTerm && !useSparql) {
       setResults([]);
       return;
     }
@@ -236,73 +399,130 @@ export default function HomeScreen() {
       const items = Array.isArray(data?.search) ? data.search : [];
       console.log('Wikidata search count:', items.length);
 
-      const normalized = (await Promise.all(
-        items.map(async (item: WikidataSearchItem) => {
-          const entity = await fetchEntity(item.id);
-          if (!entity) return null;
+      if (items.length === 0) {
+        setResults([]);
+        return;
+      }
 
-          const title = getLabel(entity.labels) || item.label || 'Sans titre';
-          labelCache.set(entity.id, title);
+      let filteredNormalized: SearchResultItem[] = [];
 
-          const imageValue = getStatementValues(entity, 'P18')[0];
-          const imageUrl = buildImageUrl(
-            typeof imageValue === 'string' ? imageValue : undefined
-          );
+      if (useSparql) {
+        const itemIds = items.map((item: WikidataSearchItem) => item.id);
+        const sparql = buildSparqlQuery(itemIds, typeIds);
+        const sparqlUrl = `https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(
+          sparql
+        )}`;
+        console.log('Wikidata SPARQL URL:', sparqlUrl);
+        const response = await fetch(sparqlUrl, {
+          method: 'GET',
+          headers: {
+            'User-Agent': 'ArtApp/1.0 (contact@example.com)',
+            Accept: 'application/sparql+json',
+          },
+        });
+        console.log('Wikidata SPARQL status:', response.status);
+        if (!response.ok) {
+          throw new Error('Request failed');
+        }
+        const data = await response.json();
+        const bindings = Array.isArray(data?.results?.bindings) ? data.results.bindings : [];
+        console.log('Wikidata SPARQL count:', bindings.length);
 
-          const artistLabels = await resolveValuesToLabels([
-            ...getStatementValues(entity, 'P170'),
-            ...getStatementValues(entity, 'P50'),
-          ]);
-          const artist = artistLabels[0] || 'Artiste inconnu';
-
-          const periodValue = getStatementValues(entity, 'P571')[0];
-          const period = formatTimeValue(periodValue) || undefined;
-
-          const museumLabels = await resolveValuesToLabels([
-            ...getStatementValues(entity, 'P195'),
-            ...getStatementValues(entity, 'P276'),
-          ]);
-          const museum = museumLabels[0] || undefined;
-
-          const cityLabels = await resolveValuesToLabels(
-            getStatementValues(entity, 'P131')
-          );
-          const city = cityLabels[0] || undefined;
-
-          const techniqueLabels = await resolveValuesToLabels([
-            ...getStatementValues(entity, 'P186'),
-            ...getStatementValues(entity, 'P2079'),
-          ]);
-
-          const domainLabels = await resolveValuesToLabels(
-            getStatementValues(entity, 'P31')
-          );
+        filteredNormalized = bindings.map((binding: any) => {
+          const itemUrl = binding.item?.value ?? '';
+          const id = extractQidFromUrl(itemUrl);
+          const title = binding.itemLabel?.value ?? 'Sans titre';
+          const artist = binding.creatorLabel?.value ?? 'Artiste inconnu';
+          const imageUrl = binding.image?.value ?? undefined;
+          const period = extractYear(binding.inception?.value) ?? undefined;
+          const museum = binding.collectionLabel?.value ?? undefined;
+          const city = binding.locationLabel?.value ?? binding.adminLabel?.value ?? undefined;
+          const baseTypeValue = binding.baseType?.value ?? '';
+          const typeQid = extractQidFromUrl(baseTypeValue);
+          const typeLabel = binding.baseTypeLabel?.value ?? '';
 
           return {
-            id: entity.id,
+            id,
             title,
             artist,
             imageUrl,
-            period,
+            period: period ? String(period) : undefined,
             museum,
             city,
-            technique: techniqueLabels.length ? techniqueLabels : undefined,
-            domain: domainLabels.length ? domainLabels : undefined,
+            domain: typeQid || undefined,
+            typeLabel: typeLabel || undefined,
           } satisfies SearchResultItem;
-        })
-      )) as Array<SearchResultItem | null>;
+        });
+      } else {
+        const normalized = (await Promise.all(
+          items.map(async (item: WikidataSearchItem) => {
+            const entity = await fetchEntity(item.id);
+            if (!entity) return null;
 
-      const filteredNormalized = normalized.filter(
-        (item): item is SearchResultItem => Boolean(item)
-      );
+            const title = getLabel(entity.labels) || item.label || 'Sans titre';
+            labelCache.set(entity.id, title);
+
+            const imageValue = getStatementValues(entity, 'P18')[0];
+            const imageUrl = buildImageUrl(
+              typeof imageValue === 'string' ? imageValue : undefined
+            );
+
+            const artistLabels = await resolveValuesToLabels([
+              ...getStatementValues(entity, 'P170'),
+              ...getStatementValues(entity, 'P50'),
+            ]);
+            const artist = artistLabels[0] || 'Artiste inconnu';
+
+            const periodValue = getStatementValues(entity, 'P571')[0];
+            const period = formatTimeValue(periodValue) || undefined;
+
+            const museumLabels = await resolveValuesToLabels([
+              ...getStatementValues(entity, 'P195'),
+              ...getStatementValues(entity, 'P276'),
+            ]);
+            const museum = museumLabels[0] || undefined;
+
+            const cityLabels = await resolveValuesToLabels(
+              getStatementValues(entity, 'P131')
+            );
+            const city = cityLabels[0] || undefined;
+
+            const techniqueLabels = await resolveValuesToLabels([
+              ...getStatementValues(entity, 'P186'),
+              ...getStatementValues(entity, 'P2079'),
+            ]);
+
+            const domainIds = getStatementValues(entity, 'P31')
+              .filter((value): value is string => typeof value === 'string');
+            const typeLabel = domainIds[0] ? await getEntityLabel(domainIds[0]) : '';
+
+            return {
+              id: entity.id,
+              title,
+              artist,
+              imageUrl,
+              period,
+              museum,
+              city,
+              technique: techniqueLabels.length ? techniqueLabels : undefined,
+              domain: domainIds.length ? domainIds : undefined,
+              typeLabel: typeLabel || undefined,
+            } satisfies SearchResultItem;
+          })
+        )) as Array<SearchResultItem | null>;
+
+        filteredNormalized = normalized.filter(
+          (item): item is SearchResultItem => Boolean(item)
+        );
+      }
 
       const filtered = showAdvanced
         ? filteredNormalized.filter((item: SearchResultItem) => {
-            const authorValue = author.trim().toLowerCase();
-            const titleValue = title.trim().toLowerCase();
-            const mediaValue = mediaType.trim().toLowerCase();
-            const yearFromValue = yearFrom.trim();
-            const yearToValue = yearTo.trim();
+          const authorValue = author.trim().toLowerCase();
+          const titleValue = title.trim().toLowerCase();
+          const mediaValue = useSparql ? [] : typeIds;
+          const yearFromValue = yearFrom.trim();
+          const yearToValue = yearTo.trim();
 
           const artistValue = (item.artist ?? '').toLowerCase();
           const titleText = (item.title ?? '').toLowerCase();
@@ -328,19 +548,14 @@ export default function HomeScreen() {
             }
           }
 
-          if (mediaValue) {
+          if (mediaValue.length > 0) {
             const domainValues = Array.isArray(item.domain)
               ? item.domain
               : item.domain
                 ? [item.domain]
                 : [];
-            const techniqueValues = Array.isArray(item.technique)
-              ? item.technique
-              : item.technique
-                ? [item.technique]
-                : [];
-            const haystack = [...domainValues, ...techniqueValues].join(' ').toLowerCase();
-            if (!haystack.includes(mediaValue)) {
+            const matches = mediaValue.some((value) => domainValues.includes(value));
+            if (!matches) {
               return false;
             }
           }
@@ -349,7 +564,8 @@ export default function HomeScreen() {
         })
         : filteredNormalized;
 
-      setResults(filtered);
+      const deduped = dedupeResults(filtered);
+      setResults(deduped);
     } catch (err) {
       setError('Impossible de charger les resultats');
     } finally {
@@ -459,7 +675,7 @@ export default function HomeScreen() {
                 setTitle('');
                 setYearFrom('');
                 setYearTo('');
-                setMediaType('');
+                setMediaTypes([]);
               }
               return next;
             });
@@ -507,24 +723,28 @@ export default function HomeScreen() {
               />
             </View>
             <View style={styles.typeRow}>
-              {['PEINTURE', 'SCULPTURE', 'DESSIN', 'OBJET'].map((typeValue) => (
+              {ART_TYPE_OPTIONS.map((option) => (
                 <Pressable
-                  key={typeValue}
+                  key={option.value}
                   onPress={() =>
-                    setMediaType((prev) => (prev === typeValue ? '' : typeValue))
+                    setMediaTypes((prev) =>
+                      prev.includes(option.value)
+                        ? prev.filter((value) => value !== option.value)
+                        : [...prev, option.value]
+                    )
                   }
                   style={({ pressed }) => [
                     styles.typeChip,
-                    mediaType === typeValue ? styles.typeChipActive : null,
+                    mediaTypes.includes(option.value) ? styles.typeChipActive : null,
                     pressed ? styles.typeChipPressed : null,
                   ]}>
                   <ThemedText
                     style={
-                      mediaType === typeValue
+                      mediaTypes.includes(option.value)
                         ? styles.typeChipTextActive
                         : styles.typeChipText
                     }>
-                    {typeValue}
+                    {option.label}
                   </ThemedText>
                 </Pressable>
               ))}

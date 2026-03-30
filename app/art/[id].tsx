@@ -19,6 +19,31 @@ import { getArtCache } from '@/store/art-cache';
 
 type ArtItem = SearchResultItem;
 
+const ART_TYPES_MAP: Record<string, string> = {
+  Q3305213: 'Peinture',
+  Q1028181: 'Dessin',
+  Q11634: 'Sculpture',
+  Q125191: 'Photo',
+  Q11060274: 'Gravure',
+  Q93184: 'Installation',
+  Q870918: 'Tapisserie',
+  Q1117439: 'Lithographie',
+  Q219423: 'Manuscrit',
+  Q17534: 'Fresque',
+  Q18761202: 'Numerique',
+  Q327313: "Objet d'art",
+};
+
+function normalizeTypeLabel(label?: string) {
+  if (!label) return '';
+  const normalized = label.toLowerCase();
+  if (normalized.includes('bande dessin')) return 'Bande dessinee';
+  if (normalized.includes('version')) return 'Version';
+  if (normalized.includes('edition') || normalized.includes('édition')) return 'Edition';
+  if (normalized.includes('traduction')) return 'Traduction';
+  return label;
+}
+
 export default function ArtDetailScreen() {
   const params = useLocalSearchParams();
   const router = useRouter();
@@ -40,7 +65,10 @@ export default function ArtDetailScreen() {
   const title = item?.title ?? '';
   const artist = item?.artist ?? '';
   const period = item?.period ?? '';
-  const domain = Array.isArray(item?.domain) ? item?.domain?.[0] ?? '' : item?.domain ?? '';
+  const domainId = Array.isArray(item?.domain) ? item?.domain?.[0] ?? '' : item?.domain ?? '';
+  const fallbackDomain = domainId.startsWith('Q') ? "Oeuvre d'art" : domainId;
+  const typeLabel = normalizeTypeLabel(item?.typeLabel);
+  const domain = typeLabel || ART_TYPES_MAP[domainId] || fallbackDomain;
   const museum = item?.museum ?? '';
   const city = item?.city ?? '';
   const technique = Array.isArray(item?.technique)
