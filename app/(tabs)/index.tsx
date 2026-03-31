@@ -310,6 +310,7 @@ export default function HomeScreen() {
   const [yearFrom, setYearFrom] = useState('');
   const [yearTo, setYearTo] = useState('');
   const [mediaTypes, setMediaTypes] = useState<string[]>([]);
+  const [onlyWithPhoto, setOnlyWithPhoto] = useState(false);
 
   const inputBackground = useThemeColor(
     { light: '#F1F3F5', dark: '#1E1F21' },
@@ -533,6 +534,9 @@ export default function HomeScreen() {
           if (titleValue && !titleText.includes(titleValue)) {
             return false;
           }
+          if (onlyWithPhoto && !item.imageUrl) {
+            return false;
+          }
 
           const itemYear = extractYear(item.period ?? '') ?? null;
           if (yearFromValue) {
@@ -670,16 +674,17 @@ export default function HomeScreen() {
           onPress={() => {
             setShowAdvanced((prev) => {
               const next = !prev;
-              if (!next) {
-                setAuthor('');
-                setTitle('');
-                setYearFrom('');
-                setYearTo('');
-                setMediaTypes([]);
-              }
-              return next;
-            });
-          }}
+                if (!next) {
+                  setAuthor('');
+                  setTitle('');
+                  setYearFrom('');
+                  setYearTo('');
+                  setMediaTypes([]);
+                  setOnlyWithPhoto(false);
+                }
+                return next;
+              });
+            }}
           style={({ pressed }) => [
             styles.advancedToggle,
             pressed ? styles.advancedTogglePressed : null,
@@ -749,6 +754,20 @@ export default function HomeScreen() {
                 </Pressable>
               ))}
             </View>
+            <Pressable
+              onPress={() => setOnlyWithPhoto((prev) => !prev)}
+              style={({ pressed }) => [
+                styles.photoToggle,
+                pressed ? styles.photoTogglePressed : null,
+              ]}>
+              <View
+                style={[
+                  styles.photoCheckbox,
+                  onlyWithPhoto ? styles.photoCheckboxChecked : null,
+                ]}
+              />
+              <ThemedText style={styles.photoToggleText}>Avec photo uniquement</ThemedText>
+            </Pressable>
           </View>
         ) : null}
         <Pressable
@@ -898,6 +917,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  photoToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 6,
+  },
+  photoTogglePressed: {
+    opacity: 0.8,
+  },
+  photoCheckbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#0a7ea4',
+    backgroundColor: '#ffffff',
+  },
+  photoCheckboxChecked: {
+    backgroundColor: '#0a7ea4',
+  },
+  photoToggleText: {
+    color: '#0a7ea4',
+    fontWeight: '600',
   },
   typeChip: {
     paddingVertical: 6,
